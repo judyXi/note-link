@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>表格</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #ffffff);
+    --bg2: var(--tg-theme-secondary-bg-color, #f1f5f9);
+    --text: var(--tg-theme-text-color, #1f2937);
+    --hint: var(--tg-theme-hint-color, #6b7280);
+    --accent: var(--tg-theme-button-color, #6366f1);
+    --accent-text: var(--tg-theme-button-text-color, #ffffff);
+    --line: color-mix(in srgb, var(--text) 10%, transparent);
+    --zebra: color-mix(in srgb, var(--text) 4%, transparent);
+    --up: #10b981; --down: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg2); color: var(--text);
+    font: 16px/1.5 -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif; }
+  main { overflow: hidden; padding: 16px 12px 40px; max-width: 900px; margin: 0 auto; }
+  .card { min-width: 0; overflow: hidden; background: var(--bg); border-radius: 16px; padding: 18px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 14px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 17px; margin: 18px 0 10px; padding-left: 10px; border-left: 4px solid var(--accent); }
+  h2:first-child { margin-top: 0; }
+  p { color: var(--hint); margin: 4px 0; font-size: 14px; }
+  .hi { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text); border-radius: 10px; padding: 10px 12px; margin: 10px 0; font-size: 15px; }
+  .wrap { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 12px; border: 1px solid var(--line); margin: 8px 0 4px; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 15px; }
+  th { background: var(--accent); color: var(--accent-text); font-weight: 600; text-align: left; padding: 10px 12px; white-space: nowrap; cursor: pointer; user-select: none; position: relative; }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th .arrow { opacity: .55; font-size: 11px; margin-left: 4px; }
+  th.sorted .arrow { opacity: 1; }
+  td { padding: 9px 12px; border-top: 1px solid var(--line); background: var(--bg); }
+  tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 96%, var(--text)); }
+  th:first-child, td:first-child { position: sticky; left: 0; z-index: 1; }
+  th:first-child { z-index: 2; }
+  td.up { color: var(--up); font-weight: 600; } td.down { color: var(--down); font-weight: 600; }
+  tr.total td { font-weight: 700; border-top: 2px solid color-mix(in srgb, var(--text) 25%, transparent); }
+  .err { color: var(--hint); text-align: center; padding: 40px 10px; }
+  .foot { color: var(--hint); font-size: 12px; text-align: center; margin-top: 10px; }
+</style>
+</head>
+<body>
+<main id="app"><div class="err">載入中…</div></main>
+<script>
+// 蠻尼的表格頁（2026-11-28 Judy 選 1A）：Telegram 不能顯示表格，蠻尼傳一顆「📊 打開表格」按鈕開這頁。
+// 表格內容放在網址 # 後面（不會送到伺服器、不存在 GitHub），格式是 markdown：
+//   # 標題 / ## 小節 / 一般行＝灰字說明 / > 重點框 / | 欄 | 欄 | 表格
+// #z=<deflate-raw 壓縮後 base64url> 或 #m=<base64url>
+const tg = window.Telegram && Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+const isSep = l => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+const NUM = /^[+\-−▲▼↑↓$NT＄]*\s*[\d,.]+\s*(%|萬|k|K|次|人|則|支|元)?$/;
+const numVal = s => { const m = String(s).replace(/[,\s]/g, '').replace('−', '-').match(/-?[\d.]+/); if (!m) return NaN; let v = parseFloat(m[0]); if (/[▼↓]/.test(s)) v = -Math.abs(v); if (/萬/.test(s)) v *= 1e4; if (/[kK]/.test(s)) v *= 1e3; return v; };
+
+function cls(t) {
+  let c = '';
+  if (/^[+▲↑🟢]/u.test(t)) c = 'up'; else if (/^[-−▼↓]\s*\d/.test(t) || /^🔴/u.test(t)) c = 'down';
+  if (NUM.test(t)) c += ' num';
+  return c.trim();
+}
+
+function render(md) {
+  const lines = md.replace(/\r/g, '').split('\n'), out = [];
+  let title = '';
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (!l.trim()) continue;
+    if (/^\s*\|/.test(l)) {
+      const block = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) block.push(lines[i++]);
+      i--;
+      const [head, ...body] = block.filter(r => !isSep(r)).map(cells);
+      out.push({ head, body });
+    } else if (/^#\s/.test(l)) { title = l.replace(/^#\s+/, ''); out.push(`<h1>${inline(title)}</h1>`); }
+    else if (/^##+\s/.test(l)) out.push(`<h2>${inline(l.replace(/^#+\s+/, ''))}</h2>`);
+    else if (/^>\s?/.test(l)) out.push(`<div class="hi">${inline(l.replace(/^>\s?/, ''))}</div>`);
+    else out.push(`<p>${inline(l)}</p>`);
+  }
+  document.title = title.replace(/[*#]/g, '') || '表格';
+  const app = document.getElementById('app');
+  const card = document.createElement('div'); card.className = 'card'; app.replaceChildren(card);
+  for (const part of out) {
+    if (typeof part === 'string') { card.insertAdjacentHTML('beforeend', part); continue; }
+    card.appendChild(makeTable(part.head, part.body));
+  }
+  app.insertAdjacentHTML('beforeend', '<div class="foot">點欄位名稱可以排序</div>');
+}
+
+function makeTable(head, body) {
+  const wrap = document.createElement('div'); wrap.className = 'wrap';
+  const hasTotal = body.length && /^(合計|總計|總和|平均|Total)/i.test(body[body.length - 1][0] || '');
+  const total = hasTotal ? body[body.length - 1] : null;
+  let rows = hasTotal ? body.slice(0, -1) : body.slice();
+  const numCol = head.map((_, j) => rows.length && rows.filter(r => NUM.test(r[j] || '')).length * 2 >= rows.length);
+  let sortCol = -1, dir = 1;
+  const draw = () => {
+    const tr = r => `<tr>${head.map((_, j) => { const t = r[j] ?? ''; const c = cls(t); return `<td${c ? ` class="${c}"` : ''}>${inline(t)}</td>`; }).join('')}</tr>`;
+    wrap.innerHTML = `<table><thead><tr>${head.map((h, j) => `<th data-j="${j}" class="${numCol[j] ? 'num' : ''}${j === sortCol ? ' sorted' : ''}">${inline(h)}<span class="arrow">${j === sortCol ? (dir > 0 ? '▲' : '▼') : '⇅'}</span></th>`).join('')}</tr></thead>
+      <tbody>${rows.map(tr).join('')}${total ? tr(total).replace('<tr>', '<tr class="total">') : ''}</tbody></table>`;
+    wrap.querySelectorAll('th').forEach(th => th.onclick = () => {
+      const j = +th.dataset.j;
+      dir = sortCol === j ? -dir : (numCol[j] ? -1 : 1); sortCol = j;
+      rows.sort((a, b) => numCol[j] ? ((numVal(a[j]) || 0) - (numVal(b[j]) || 0)) * dir : String(a[j] || '').localeCompare(String(b[j] || ''), 'zh-Hant') * dir);
+      if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+      draw();
+    });
+  };
+  draw();
+  return wrap;
+}
+
+async function decode() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  const b64 = (h.get('z') || h.get('m') || '').replace(/-/g, '+').replace(/_/g, '/');
+  if (!b64) throw new Error('這個連結沒有帶表格內容');
+  const bytes = Uint8Array.from(atob(b64 + '==='.slice((b64.length + 3) % 4)), c => c.charCodeAt(0));
+  if (h.get('m')) return new TextDecoder().decode(bytes);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  return new TextDecoder().decode(await new Response(stream).arrayBuffer());
+}
+
+decode().then(render).catch(e => {
+  document.getElementById('app').innerHTML = `<div class="err">${esc(e.message || e)}<br>請蠻尼重傳一次</div>`;
+});
+</script>
+</body>
+</html>
